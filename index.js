@@ -6,110 +6,76 @@ const Stripe = require("stripe");
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ---------- MIDDLEWARE ----------
+// middleware
 app.use(express.json());
 
-// Stripe webhook needs RAW body
+// Stripe webhook needs raw body
 app.use(
   "/api/v1/stripe/webhook",
   bodyParser.raw({ type: "application/json" })
 );
 
-// ---------- CREATE DEPOSIT ----------
+// CREATE DEPOSIT API
 app.post("/api/v1/transaction/deposit-create", async (req, res) => {
   try {
     const { username, orderId, amount } = req.body;
 
     if (!username || !orderId || !amount) {
-      return res.status(400).json({
-        error: "Missing required fields"
-      });
-    }
-
-    if (amount <= 0) {
-      return res.status(400).json({
-        error: "Invalid amount"
-      });
+      return res.status(400).json({ error: "Missing fields" });
     }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "payment",
-      customer_email: `${username}@example.com`,
       line_items: [
         {
           price_data: {
             currency: "usd",
             product_data: {
-              name: "Account Deposit",
-              description: `Deposit for user ${username}`
+              name: "Deposit",
+              description: `User ${username}`
             },
-            unit_amount: Math.round(amount * 100)
+            unit_amount: amount * 100
           },
           quantity: 1
         }
       ],
-      metadata: {
-        username,
-        orderId
-      },
-      success_url: `${process.env.BASE_URL}/success`,
-      cancel_url: `${process.env.BASE_URL}/cancel`
+      metadata: { username, orderId },
+      success_url: "https://example.com/success",
+      cancel_url: "https://example.com/cancel"
     });
 
-    return res.json({
-      checkoutUrl: session.url
-    });
-  } catch (error) {
-    console.error("Deposit error:", error);
-    return res.status(500).json({
-      error: "Failed to create checkout session"
-    });
+    res.json({ checkoutUrl: session.url });
+  } catch (err) {
+    res.status(500).json({ error: "Stripe error" });
   }
 });
 
-// ---------- STRIPE WEBHOOK ----------
+// STRIPE WEBHOOK
 app.post("/api/v1/stripe/webhook", (req, res) => {
   const sig = req.headers["stripe-signature"];
 
   let event;
   try {
-    event = stripe.webhooks.constructEvent(
+    event = Stripe.webhooks.constructEvent(
       req.body,
       sig,
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error("Webhook signature error:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    return res.status(400).send("Webhook error");
   }
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
-
-    const username = session.metadata.username;
-    const orderId = session.metadata.orderId;
-    const amountPaid = session.amount_total / 100;
-
-    console.log("✅ PAYMENT CONFIRMED");
-    console.log({
-      username,
-      orderId,
-      amountPaid,
-      stripeSessionId: session.id
-    });
-
-    // 👉 HERE you should:
-    // - Mark order as PAID
-    // - Credit user balance
-    // - Store transaction in database
+    console.log("PAYMENT SUCCESS:", session.metadata);
   }
 
   res.json({ received: true });
 });
 
-// ---------- START SERVER ----------
+// START SERVER
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log("Server running on port", PORT);
 });
